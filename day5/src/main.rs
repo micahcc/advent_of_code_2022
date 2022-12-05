@@ -1,147 +1,262 @@
 use std::env;
 use std::fs;
 /*
+--- Day 5: Supply Stacks ---
+The expedition can depart as soon as the final supplies have been unloaded from
+the ships. Supplies are stored in stacks of marked crates, but because the
+needed supplies are buried under many other crates, the crates need to be
+rearranged.
 
---- Day 4: Camp Cleanup ---
-Space needs to be cleared before the last supplies can be unloaded from the ships, and so several
-Elves have been assigned the job of cleaning up sections of the camp. Every section has a unique ID
-number, and each Elf is assigned a range of section IDs.
+The ship has a giant cargo crane capable of moving crates between stacks. To
+ensure none of the crates get crushed or fall over, the crane operator will
+rearrange them in a series of carefully-planned steps. After the crates are
+rearranged, the desired crates will be at the top of each stack.
 
-However, as some of the Elves compare their section assignments with each other, they've noticed
-that many of the assignments overlap. To try to quickly find overlaps and reduce duplicated effort,
-the Elves pair up and make a big list of the section assignments for each pair (your puzzle input).
+The Elves don't want to interrupt the crane operator during this delicate
+procedure, but they forgot to ask her which crate will end up where, and they
+want to be ready to unload them as soon as possible so they can embark.
 
-For example, consider the following list of section assignment pairs:
+They do, however, have a drawing of the starting stacks of crates and the
+rearrangement procedure (your puzzle input). For example:
 
-2-4,6-8
-2-3,4-5
-5-7,7-9
-2-8,3-7
-6-6,4-6
-2-6,4-8
+    [D]
+[N] [C]
+[Z] [M] [P]
+ 1   2   3
 
-For the first few pairs, this list means:
+move 1 from 2 to 1
+move 3 from 1 to 3
+move 2 from 2 to 1
+move 1 from 1 to 2
 
-Within the first pair of Elves, the first Elf was assigned sections 2-4 (sections 2, 3, and 4),
-while the second Elf was assigned sections 6-8 (sections 6, 7, 8).
+In this example, there are three stacks of crates. Stack 1 contains two crates:
+crate Z is on the bottom, and crate N is on top. Stack 2 contains three crates;
+from bottom to top, they are crates M, C, and D. Finally, stack 3 contains a
+single crate, P.
 
-The Elves in the second pair were each assigned two sections.
+Then, the rearrangement procedure is given. In each step of the procedure, a
+quantity of crates is moved from one stack to a different stack. In the first
+step of the above rearrangement procedure, one crate is moved from stack 2 to
+stack 1, resulting in this configuration:
 
-The Elves in the third pair were each assigned three sections: one got sections 5, 6, and 7, while
-the other also got 7, plus 8 and 9.
+[D]
+[N] [C]
+[Z] [M] [P]
+ 1   2   3
 
-This example list uses single-digit section IDs to make it easier to draw; your actual list might
-contain larger numbers. Visually, these pairs of section assignments look like this:
+In the second step, three crates are moved from stack 1 to stack 3. Crates are
+moved one at a time, so the first crate to be moved (D) ends up below the
+second and third crates:
 
-.234.....  2-4
-.....678.  6-8
+        [Z]
+        [N]
+    [C] [D]
+    [M] [P]
+ 1   2   3
 
-.23......  2-3
-...45....  4-5
+Then, both crates are moved from stack 2 to stack 1. Again, because crates are
+moved one at a time, crate C ends up below crate M:
 
-....567..  5-7
-......789  7-9
+        [Z]
+        [N]
+[M]     [D]
+[C]     [P]
+ 1   2   3
 
-.2345678.  2-8
-..34567..  3-7
+Finally, one crate is moved from stack 1 to stack 2:
 
-.....6...  6-6
-...456...  4-6
+        [Z]
+        [N]
+        [D]
+[C] [M] [P]
+ 1   2   3
 
-.23456...  2-6
-...45678.  4-8
+The Elves just need to know which crate will end up on top of each stack; in
+this example, the top crates are C in stack 1, M in stack 2, and Z in stack 3,
+so you should combine these together and give the Elves the message CMZ.
 
-Some of the pairs have noticed that one of their assignments fully contains the other. For example,
-2-8 fully contains 3-7, and 6-6 is fully contained by 4-6. In pairs where one assignment fully
-contains the other, one Elf in the pair would be exclusively cleaning sections their partner will
-already be cleaning, so these seem like the most in need of reconsideration. In this example, there
-are 2 such pairs.
-
-In how many assignment pairs does one range fully contain the other?
+After the rearrangement procedure completes, what crate ends up on top of each stack?
 
 --- Part Two ---
-It seems like there is still quite a bit of duplicate work planned. Instead, the Elves would like
-to know the number of pairs that overlap at all.
+As you watch the crane operator expertly rearrange the crates, you notice the process isn't
+following your prediction.
 
-In the above example, the first two pairs (2-4,6-8 and 2-3,4-5) don't overlap, while the remaining
-four pairs (5-7,7-9, 2-8,3-7, 6-6,4-6, and 2-6,4-8) do overlap:
+Some mud was covering the writing on the side of the crane, and you quickly wipe it away. The crane
+isn't a CrateMover 9000 - it's a CrateMover 9001.
 
-5-7,7-9 overlaps in a single section, 7.
-2-8,3-7 overlaps all of the sections 3 through 7.
-6-6,4-6 overlaps in a single section, 6.
-2-6,4-8 overlaps in sections 4, 5, and 6.
-So, in this example, the number of overlapping assignment pairs is 4.
+The CrateMover 9001 is notable for many new and exciting features: air conditioning, leather seats,
+an extra cup holder, and the ability to pick up and move multiple crates at once.
 
-In how many assignment pairs do the ranges overlap?
+Again considering the example above, the crates begin in the same configuration:
 
+    [D]
+[N] [C]
+[Z] [M] [P]
+ 1   2   3
+
+Moving a single crate from stack 2 to stack 1 behaves the same as before:
+
+[D]
+[N] [C]
+[Z] [M] [P]
+ 1   2   3
+
+However, the action of moving three crates from stack 1 to stack 3 means that those three moved
+crates stay in the same order, resulting in this new configuration:
+
+        [D]
+        [N]
+    [C] [Z]
+    [M] [P]
+ 1   2   3
+
+Next, as both crates are moved from stack 2 to stack 1, they retain their order as well:
+
+        [D]
+        [N]
+[C]     [Z]
+[M]     [P]
+ 1   2   3
+
+Finally, a single crate is still moved from stack 1 to stack 2, but now it's crate C that gets
+moved:
+
+        [D]
+        [N]
+        [Z]
+[M] [C] [P]
+ 1   2   3
+
+In this example, the CrateMover 9001 has put the crates in a totally different order: MCD.
+
+Before the rearrangement process finishes, update your simulation so that the Elves know where they
+should stand to be ready to unload the final supplies. After the rearrangement procedure completes,
+what crate ends up on top of each stack?
 
 */
 
-struct Range {
-    lo: u32,
-    hi: u32,
+struct State {
+    stacks: Vec<Vec<char>>,
 }
 
-struct TwoRanges {
-    left: Range,
-    right: Range,
-}
+fn load_initial(data: &str) -> State {
+    let mut stacks: Vec<Vec<char>> = Default::default();
 
-fn right_fully_contains_left(left: &Range, right: &Range) -> bool {
-    return left.lo >= right.lo && left.hi <= right.hi;
-}
+    // first order from top to bottom, then we'll reverse
+    for line in data.lines() {
+        // don't need white space or [], we'll just use straight columns
+        // columns are at 1 + 4n
+        let mut i = 0;
+        loop {
+            let j = i * 4 + 1;
+            if j >= line.len() {
+                break;
+            }
 
-fn one_fully_contains_another(ranges: &TwoRanges) -> bool {
-    return right_fully_contains_left(&ranges.left, &ranges.right)
-        || right_fully_contains_left(&ranges.right, &ranges.left);
-}
-
-fn no_overlap(ranges: &TwoRanges) -> bool {
-    return ranges.left.lo > ranges.right.hi || ranges.right.lo > ranges.left.hi;
-}
-
-fn parse_range(range_str: &str) -> Result<Range, &'static str> {
-    match range_str.split_once('-') {
-        Some((low, hi)) => {
-            let lo_v = low.parse::<u32>().expect("Should be an int");
-            let hi_v = hi.parse::<u32>().expect("Should be an int");
-            return Ok(Range { lo: lo_v, hi: hi_v });
-        }
-        None => {
-            return Err("No dash");
+            let c = line.chars().nth(j).unwrap();
+            stacks.resize_with(std::cmp::max(i + 1, stacks.len()), Default::default);
+            stacks[i].push(c);
+            i += 1;
         }
     }
-}
 
-fn parse_line(line: &str) -> Result<TwoRanges, &'static str> {
-    match line.split_once(',') {
-        Some((elf1, elf2)) => {
-            return Ok(TwoRanges {
-                left: parse_range(elf1).expect("Should have a range"),
-                right: parse_range(elf2).expect("Should have a range"),
-            })
-        }
-        None => {
-            return Err("No comman");
+    // pop the tops off, becuse they are all col names
+    // reverse them all
+    // remove empties
+    for v in stacks.iter_mut() {
+        let _ = v.pop();
+        v.reverse();
+        loop {
+            match v.last() {
+                Some(' ') => {
+                    v.pop();
+                }
+                _ => {
+                    break;
+                }
+            }
         }
     }
+
+    return State { stacks: stacks };
 }
 
 fn main() {
-    let fname = env::args().nth(1).expect("Should pass 1 filename arg");
-    let contents = fs::read_to_string(fname).expect("Should have been able to read the file");
+    let initial_fname = env::args()
+        .nth(1)
+        .expect("Usages <initial> <orders> <9000|9001>");
+    let orders_fname = env::args()
+        .nth(2)
+        .expect("Usages <initial> <orders> <9000|9001>");
+    let crane = env::args()
+        .nth(3)
+        .expect("Usages <initial> <orders> <9000|9001>")
+        .trim()
+        .to_string();
 
-    let mut part1 = 0;
-    let mut part2 = 0;
-    for line in contents.lines() {
-        let ranges = parse_line(line).expect("Should parse");
-        if one_fully_contains_another(&ranges) {
-            part1 += 1;
-        }
-        if !no_overlap(&ranges) {
-            part2 += 1;
+    println!("Crane: {:?}", crane);
+    let is_9001 = crane == "9001";
+    if !is_9001 {
+        assert!(crane == "9000");
+    }
+
+    let initial =
+        fs::read_to_string(initial_fname).expect("Should have been able to read initial state");
+    let orders =
+        fs::read_to_string(orders_fname).expect("Should have been able to read the orders");
+
+    let mut state = load_initial(&initial);
+
+    // now run through orders
+    for line in orders.lines() {
+        let mut iter = line.split_ascii_whitespace();
+        let _ = iter.next(); // move
+        let move_count = iter
+            .next()
+            .unwrap()
+            .parse::<u32>()
+            .expect("move count should be integer"); // number to move
+        let _ = iter.next().unwrap(); // "from"
+        let from = iter
+            .next()
+            .unwrap()
+            .parse::<u32>()
+            .expect("Should have from int"); // column to move from
+        let _ = iter.next().unwrap(); // "to"
+        let to = iter
+            .next()
+            .unwrap()
+            .parse::<u32>()
+            .expect("should have to int"); // column to move to
+
+        if is_9001 {
+            for i in 0..move_count {
+                let f = &state.stacks[(from - 1) as usize];
+                let j = f.len() as u32 - move_count + i;
+                let name: char = f[j as usize];
+                state.stacks[(to - 1) as usize].push(name);
+                //println!("Moved {:?} from {:?} to {:?}", name, from, to);
+            }
+            for _ in 0..move_count {
+                state.stacks[(from - 1) as usize].pop().unwrap();
+            }
+        } else {
+            for _ in 0..move_count {
+                let name: char = state.stacks[(from - 1) as usize].pop().unwrap();
+                state.stacks[(to - 1) as usize].push(name);
+                //println!("Moved {:?} from {:?} to {:?}", name, from, to);
+            }
         }
     }
-    println!("part1: {:?}", part1);
-    println!("part2: {:?}", part2);
+    for v in state.stacks {
+        match v.last() {
+            Some(c) => {
+                print!("{}", c);
+            }
+            _ => {
+                print!(" ");
+            }
+        }
+    }
+    println!("\nDone");
 }
