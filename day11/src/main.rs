@@ -470,6 +470,12 @@ fn part2(contents: &str) {
         })
     }
 
+    // find multiple of all test numbers
+    let mut factor = 1;
+    for m in monkeys.iter() {
+        factor *= m.test;
+    }
+
     for iter in 0..10000 {
         println!("{}", iter);
         for i in 0..monkeys.len() {
@@ -512,6 +518,7 @@ fn part2(contents: &str) {
                     }
                 }
 
+                item = item % factor;
                 if item % monkeys[i].test == 0 {
                     let j = monkeys[i].true_target;
                     //println!("{} throes {} to {}", i, item, j);
