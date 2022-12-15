@@ -1,9 +1,7 @@
 use ndarray::prelude::*;
-use ndarray::Array2;
 use std::cmp;
-use std::collections::VecDeque;
+use std::collections::HashSet;
 use std::env;
-use std::fmt;
 use std::fs;
 
 /*
@@ -113,8 +111,7 @@ struct Point {
 
 #[derive(Debug)]
 struct World {
-    map: Array2<u8>,
-    origin: Point,
+    sensors: Vec<Sensor>,
 }
 
 #[derive(Debug)]
@@ -122,18 +119,6 @@ struct Sensor {
     sensor: Point,
     beacon: Point,
     dist: i32,
-}
-
-impl std::fmt::Display for World {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        for row in self.map.rows() {
-            for v in row {
-                write!(f, "{}", *v as char);
-            }
-            write!(f, "\n");
-        }
-        return Ok(());
-    }
 }
 
 fn parse_point(line: &str) -> Point {
@@ -154,17 +139,14 @@ fn parse_line(line: &str) -> Sensor {
     };
 }
 
-impl World {
-    fn parse(contents: &str, make_floor: bool) -> World {
-        // read lines and compute bounds
+impl std::fmt::Display for World {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mut min_x = i32::MAX;
         let mut max_x = i32::MIN;
         let mut min_y = i32::MAX;
         let mut max_y = i32::MIN;
         let mut max_d = 0;
-        let mut sensors: Vec<Sensor> = vec![];
-        for line in contents.lines() {
-            let sensor = parse_line(line);
+        for sensor in self.sensors.iter() {
             let s = &sensor.sensor;
             let b = &sensor.beacon;
 
@@ -181,8 +163,6 @@ impl World {
             max_y = cmp::max(s.y, max_y);
 
             max_d = cmp::max(max_d, sensor.dist);
-
-            sensors.push(sensor);
         }
 
         min_x -= max_d;
@@ -196,10 +176,9 @@ impl World {
                 grid[[y, x]] = b'.';
             }
         }
-
         // draw sensor and beacons
         // and render the areas that are covered
-        for sensor in sensors {
+        for sensor in self.sensors.iter() {
             for dx in -sensor.dist..(sensor.dist + 1) {
                 // ydist + dx
                 let ydist = sensor.dist - dx.abs();
@@ -209,7 +188,6 @@ impl World {
                     grid[[y as usize, x as usize]] = b'#';
                 }
             }
-
             let sx = sensor.sensor.x - min_x;
             let sy = sensor.sensor.y - min_y;
             let bx = sensor.beacon.x - min_x;
@@ -218,33 +196,96 @@ impl World {
             grid[[by as usize, bx as usize]] = b'B';
         }
 
-        return World {
-            map: grid,
-            origin: Point { x: min_x, y: min_y },
-        };
+        for row in grid.rows() {
+            for v in row {
+                write!(f, "{}", *v as char).unwrap();
+            }
+            write!(f, "\n").unwrap();
+        }
+        return Ok(());
+    }
+}
+
+#[derive(Debug)]
+struct Range {
+    min_x: i32,
+    max_x: i32,
+}
+
+impl World {
+    fn parse(contents: &str, make_floor: bool) -> World {
+        // read lines and compute bounds
+        let mut sensors: Vec<Sensor> = vec![];
+        for line in contents.lines() {
+            sensors.push(parse_line(line));
+        }
+        return World { sensors: sensors };
     }
 
-    fn count_row_coverage(&self, row: i32) -> u32 {
-        let y = row - self.origin.y;
-        if y < 0 || y >= self.map.nrows() as i32 {
-            return 0;
-        }
+    fn count_row_coverage(&self, row_of_interest: i32) -> usize {
+        // draw sensor and beacons
+        // and render the areas that are covered
+        let mut coverage = HashSet::<i32>::new();
+        for sensor in self.sensors.iter() {
+            let row_dist = (sensor.sensor.y - row_of_interest).abs();
+            if row_dist > sensor.dist {
+                // too far
+                continue;
+            }
 
-        let mut count = 0;
-        for x in 0..self.map.ncols() {
-            if self.map[[y as usize, x as usize]] == b'#' {
-                count += 1;
+            let xdist = sensor.dist - row_dist;
+            for dx in -xdist..(xdist + 1) {
+                let x = dx + sensor.sensor.x;
+                coverage.insert(x);
             }
         }
-        return count;
+
+        // drop beacon locations
+        // stupid, they didn't really specify this
+        for sensor in self.sensors.iter() {
+            if sensor.beacon.y == row_of_interest {
+                coverage.remove(&sensor.beacon.x);
+            }
+        }
+
+        return coverage.len();
+    }
+
+    fn find_gap(&self, row_of_interest: i32, min_x: i32, max_x: i32) -> Option<i32> {
+        let mut ranges: Vec<Range> = vec![];
+        for sensor in self.sensors.iter() {
+            let row_dist = (sensor.sensor.y - row_of_interest).abs();
+            if row_dist > sensor.dist {
+                // too far
+                continue;
+            }
+
+            let xdist = sensor.dist - row_dist;
+            ranges.push(Range {
+                min_x: sensor.sensor.x - xdist,
+                max_x: sensor.sensor.x + xdist,
+            });
+        }
+
+        ranges.sort_by(|a, b| a.min_x.partial_cmp(&b.min_x).unwrap());
+
+        //println!("Ranges: {:?}", ranges);
+        // in increasing order check coverage
+        let mut limit = min_x; // limit is uncovered
+        for r in ranges {
+            if r.min_x > limit {
+                // found a gap
+                return Some(limit);
+            }
+            limit = cmp::max(limit, r.max_x + 1);
+        }
+
+        return None;
     }
 }
 
 fn part1(contents: &str) {
-    let mut world = World::parse(contents, false);
-
-    println!("World:\n\n{}", world);
-    println!("Row {} coverage: {}", 10, world.count_row_coverage(10));
+    let world = World::parse(contents, false);
     println!(
         "Row {} coverage: {}",
         2000000,
@@ -253,8 +294,28 @@ fn part1(contents: &str) {
 }
 
 fn part2(contents: &str) {
-    let mut world = World::parse(contents, true);
-    println!("World: {}", world);
+    let world = World::parse(contents, true);
+
+    //for row in 0..20 {
+    for row in 0..4000000 {
+        if row % 10000 == 0 {
+            println!("Searching row: {}", row);
+        }
+        match world.find_gap(row, 0, 4000000) {
+            //match world.find_gap(row, 0, 20) {
+            None => {}
+            Some(x) => {
+                println!(
+                    "Found gap at {}, {}, signal: {}",
+                    x,
+                    row,
+                    (x as i64) * 4000000 + (row as i64)
+                );
+                break;
+            }
+        }
+    }
+    //println!("{}", world);
 }
 
 fn main() {
@@ -262,5 +323,5 @@ fn main() {
     let contents = fs::read_to_string(fname).expect("Should have been able to read the file");
 
     part1(&contents);
-    //part2(&contents);
+    part2(&contents);
 }
