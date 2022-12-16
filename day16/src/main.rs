@@ -187,8 +187,11 @@ struct Valve {
 
     // order to take neighbors during traversal
     // this is a plan, its not updatd during traversal
-    permutations: Vec<Vec<usize>>,
+    // permutations are size neighbors + 1
+    // if index is out of bounds then we open the valve, otherwise we just
+    // pass through
     permutation_number: usize,
+    permutations: Vec<Vec<usize>>,
 
     // during traversal we'll update this each time we visit this node
     // each time we'll go to:
@@ -307,10 +310,15 @@ impl World {
             let mut has_match = false;
             for v in valves.iter_mut() {
                 if v.name == name {
+                    let mut n_perms = nbr_indices.len();
+                    if rate > 0 {
+                        n_perms += 1;
+                    }
+
                     has_match = true;
                     v.rate = rate;
                     v.neighbors = nbr_indices.clone();
-                    v.permutations = compute_permutations(v.neighbors.len());
+                    v.permutations = compute_permutations(n_perms);
                     v.permutation_number = 0;
                     v.turn_index = 0;
                     break;
@@ -318,11 +326,16 @@ impl World {
             }
 
             if !has_match {
+                let mut n_perms = nbr_indices.len();
+                if rate > 0 {
+                    n_perms += 1;
+                }
+
                 valves.push(Valve {
                     name: name,
                     rate: rate,
                     neighbors: nbr_indices.clone(),
-                    permutations: compute_permutations(nbr_indices.len()),
+                    permutations: compute_permutations(n_perms),
                     permutation_number: 0,
                     turn_index: 0,
                     open_tick: 0,
@@ -367,40 +380,44 @@ impl World {
         let mut tick = 1;
         let mut pressure_released = 0;
         for _ in 0..self.timeout {
-            println!("t={} at={:?}", tick, self.valves[pos]);
-            if self.valves[pos].open_tick == -1 && self.valves[pos].rate > 0 {
-                // valve isn't open and it has a non-zero rate, open it
-                println!("Opening {}", self.valves[pos].name);
-                self.valves[pos].open_tick = tick;
-            } else {
-                // nothing to do, move
-                // TODO(micah) make a turn based on permutation
-                let perm_num = self.valves[pos].permutation_number;
-                let mut turn_index = self.valves[pos].turn_index;
-                let nbr_index = self.valves[pos].permutations[perm_num][turn_index];
-
-                // increment, roll over turn index, then update it for this node
-                turn_index += 1;
-                if turn_index >= self.valves[pos].neighbors.len() {
-                    turn_index = 0;
-                }
-                self.valves[pos].turn_index = turn_index;
-
-                // move to new positoin
-                let new_pos = self.valves[pos].neighbors[nbr_index];
-                let new_name = &self.valves[new_pos].name;
-
-                println!("Moving to {}", new_name);
-                pos = new_pos;
-            }
-
             // update released pressure
             for v in self.valves.iter() {
                 if v.open_tick != -1 {
                     pressure_released += v.rate;
+                    println!("{} open, releasing {}", v.name, v.rate);
                 }
             }
 
+            let perm_num = self.valves[pos].permutation_number;
+            let mut turn_index = self.valves[pos].turn_index;
+            let nbr_index = self.valves[pos].permutations[perm_num][turn_index];
+
+            println!("t={} at={:?}", tick, self.valves[pos]);
+            let mut new_pos = pos;
+            if nbr_index >= self.valves[pos].neighbors.len() && self.valves[pos].open_tick == -1 {
+                // valve isn't open and it has a non-zero rate, open it
+                println!("Opening {}", self.valves[pos].name);
+                self.valves[pos].open_tick = tick;
+            } else {
+                // move to new position, if nbr_index is out of bounds just
+                // roll around, this can happen if we visit multiple times
+                // and want to open multiple times
+                new_pos = self.valves[pos].neighbors[nbr_index % self.valves[pos].neighbors.len()];
+                let new_name = &self.valves[new_pos].name;
+
+                println!("Moving to {}", new_name);
+            }
+
+            // increment turn_index, roll over turn index, then update it for this node
+            turn_index += 1;
+            if turn_index >= self.valves[pos].permutations[perm_num].len() {
+                turn_index = 0;
+            }
+            self.valves[pos].turn_index = turn_index;
+
+            // move forward in time
+            // move to new pos (if we did move)
+            pos = new_pos;
             tick += 1;
         }
 
@@ -413,7 +430,7 @@ fn part1(contents: &str) {
     println!("{:?}", world);
 
     let mut max_released = 0;
-    for i in 0..10 {
+    for i in 0..10000 {
         let released = world.next_route();
         println!("Route: {}, Released: {}", i, released);
         if released > max_released {
