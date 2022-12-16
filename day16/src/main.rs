@@ -1,6 +1,7 @@
 use ndarray::prelude::*;
 use std::cmp;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 
@@ -178,6 +179,8 @@ struct World {
     start_valve: usize, // index we start at
     timeout: usize,
 
+    nexts: Array2<usize>,
+
     // order to take neighbors during traversal
     // this is a plan, its not updatd during traversal
     permutation_number: usize,
@@ -189,19 +192,20 @@ struct Valve {
     name: String,
     rate: i32,
     neighbors: Vec<usize>, // indices into valves array
+    is_open: bool,
 }
 
-fn get_path(next: &Array2<usize>, u: usize, v: usize) -> Vec<usize> {
+fn get_path(next: &Array2<usize>, u_in: usize, v: usize) -> VecDeque<usize> {
     if next[[u, v]] == usize::MAX {
         println!("No path!");
-        return Vec::new();
+        return VecDeque::new();
     }
 
-    let mut path = vec![];
-    path.push(u);
+    let mut path = VecDeque::new();
+    path.push_back(u);
     while u != v {
         u = next[[u, v]];
-        path.push(u);
+        path.push_back(u);
     }
     return path;
 }
@@ -333,6 +337,7 @@ impl World {
                         name: n,
                         rate: -1,
                         neighbors: Default::default(),
+                        is_open: false,
                     })
                 }
             }
@@ -363,6 +368,7 @@ impl World {
                     name: name,
                     rate: rate,
                     neighbors: nbr_indices.clone(),
+                    is_open: false,
                 })
             }
         }
@@ -379,6 +385,7 @@ impl World {
         }
 
         // compute next graph
+        let nexts = compute_next(valves);
 
         let mut permutations: Vec<Vec<usize>> = vec![];
         help_compute_permutations(&mut to_visit, 0, &mut permutations);
@@ -389,6 +396,7 @@ impl World {
             timeout: 30,
             permutation_number: 0,
             permutations: permutations,
+            nexts: nexts,
         };
     }
 
@@ -401,55 +409,63 @@ impl World {
             return None;
         }
 
+        // close all valves
+        for v in self.valves.iter_mut() {
+            v.is_open = false;
+        }
+
         println!("Plan: {:?}", self.permutations[self.permutation_number]);
+        let mut targets = self.permutations[self.permutation_number].clone();
 
         // run simulation following current permutation rules
+        let mut route: VecDeque<usize> = VecDeque::new();
         let mut pos = self.start_valve;
         let mut tick = 1;
         let mut pressure_released = 0;
         for target in 0..self.timeout {
             // update released pressure
             for v in self.valves.iter() {
-                if v.open_tick != -1 {
+                if v.is_open {
                     pressure_released += v.rate;
                     println!("{} open, releasing {}", v.name, v.rate);
                 }
             }
 
-            let perm_num = self.valves[pos].permutation_number;
-            let mut turn_index = self.valves[pos].turn_index;
-            let nbr_index = self.valves[pos].permutations[perm_num][turn_index];
+            // figure out route
+            let mut can_move = true;
+            if route.len() == 0 {
+                if !self.valves[pos].is_open && self.valves[pos].rate > 0 {
+                    // open it
+                    self.valves[pos].is_open = true;
+                    can_move = false;
+                }
+                // don't need to open or already open
+                // new route
+                let next_target = targets.pop().unwrap_or_default();
+                route = get_path(&self.nexts, pos, next_target);
+            }
 
             println!("t={} at={:?}", tick, self.valves[pos]);
-            let mut new_pos = pos;
-            if nbr_index >= self.valves[pos].neighbors.len() && self.valves[pos].open_tick == -1 {
-                // valve isn't open and it has a non-zero rate, open it
-                println!("Opening {}", self.valves[pos].name);
-                self.valves[pos].open_tick = tick;
-            } else {
-                // move to new position, if nbr_index is out of bounds just
-                // roll around, this can happen if we visit multiple times
-                // and want to open multiple times
-                new_pos = self.valves[pos].neighbors[nbr_index % self.valves[pos].neighbors.len()];
-                let new_name = &self.valves[new_pos].name;
-
-                println!("Moving to {}", new_name);
+            if can_move && route.len() > 0 {
+                // move toward next target
+                match route.pop_front() {
+                    Some(new_pos) => {
+                        println!(
+                            "Moving {} to {}",
+                            self.valves[pos].name, self.valves[new_pos].name
+                        );
+                        pos = new_pos;
+                    }
+                    None => {
+                        println!("Idling");
+                    }
+                }
             }
-
-            // increment turn_index, roll over turn index, then update it for this node
-            turn_index += 1;
-            if turn_index >= self.valves[pos].permutations[perm_num].len() {
-                turn_index = 0;
-            }
-            self.valves[pos].turn_index = turn_index;
 
             // move forward in time
-            // move to new pos (if we did move)
-            pos = new_pos;
             tick += 1;
         }
-
-        return pressure_released as usize;
+        return Some(pressure_released as usize);
     }
 }
 
@@ -459,10 +475,17 @@ fn part1(contents: &str) {
 
     let mut max_released = 0;
     for i in 0..10000 {
-        let released = world.next_route();
-        println!("Route: {}, Released: {}", i, released);
-        if released > max_released {
-            max_released = released;
+        match world.next_route() {
+            Some(released) => {
+                println!("Route: {}, Released: {}", i, released);
+                if released > max_released {
+                    max_released = released;
+                }
+            }
+            _ => {
+                println!("Exhausted ordering");
+                break;
+            }
         }
     }
 
