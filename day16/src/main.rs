@@ -177,6 +177,11 @@ struct World {
     valves: Vec<Valve>,
     start_valve: usize, // index we start at
     timeout: usize,
+
+    // order to take neighbors during traversal
+    // this is a plan, its not updatd during traversal
+    permutation_number: usize,
+    permutations: Vec<Vec<usize>>,
 }
 
 #[derive(Debug)]
@@ -184,22 +189,60 @@ struct Valve {
     name: String,
     rate: i32,
     neighbors: Vec<usize>, // indices into valves array
+}
 
-    // order to take neighbors during traversal
-    // this is a plan, its not updatd during traversal
-    // permutations are size neighbors + 1
-    // if index is out of bounds then we open the valve, otherwise we just
-    // pass through
-    permutation_number: usize,
-    permutations: Vec<Vec<usize>>,
+fn get_path(next: &Array2<usize>, u: usize, v: usize) -> Vec<usize> {
+    if next[[u, v]] == usize::MAX {
+        println!("No path!");
+        return Vec::new();
+    }
 
-    // during traversal we'll update this each time we visit this node
-    // each time we'll go to:
-    // permutations[permutation_number][turn_index++]
-    turn_index: usize,
+    let mut path = vec![];
+    path.push(u);
+    while u != v {
+        u = next[[u, v]];
+        path.push(u);
+    }
+    return path;
+}
 
-    // what tick the valve was closed at
-    open_tick: i32,
+fn compute_next(valves: Vec<Valve>) -> Array2<usize> {
+    // https://en.wikipedia.org/wiki/Floyd%E2%80%93Warshall_algorithm
+    let n = valves.len();
+    let mut dist = Array::zeros((n, n));
+    let mut next = Array::zeros((n, n));
+    dist.fill(usize::MAX);
+    next.fill(usize::MAX); // max is a sentinal for no path
+
+    for (u, valve) in valves.iter().enumerate() {
+        for nbr in valve.neighbors {
+            // can go directly, dist = 1, next equals direct
+            dist[[u, nbr]] = 1;
+            next[[u, nbr]] = nbr;
+        }
+    }
+
+    for (u, valve) in valves.iter().enumerate() {
+        for nbr in valve.neighbors {
+            // already here, dist is zero
+            dist[[u, u]] = 0;
+            next[[u, u]] = u;
+        }
+    }
+
+    for k in 0..n {
+        for i in 0..n {
+            for j in 0..n {
+                // if going through k makes the distance shorter, then take it
+                if dist[[i, j]] > dist[[i, k]] + dist[[k, j]] {
+                    dist[[i, j]] = dist[[i, k]] + dist[[k, j]];
+                    next[[i, j]] = next[[i, k]];
+                }
+            }
+        }
+    }
+
+    return next;
 }
 
 impl std::fmt::Display for World {
@@ -238,14 +281,6 @@ fn help_compute_permutations(arr: &mut Vec<usize>, k: usize, permutations: &mut 
     if k == arr.len() - 1 {
         permutations.push(arr.clone());
     }
-}
-
-fn compute_permutations(n_indices: usize) -> Vec<Vec<usize>> {
-    let mut arr: Vec<usize> = (0..n_indices).collect();
-    let mut out: Vec<Vec<usize>> = vec![];
-    help_compute_permutations(&mut arr, 0, &mut out);
-
-    return out;
 }
 
 impl World {
@@ -298,10 +333,6 @@ impl World {
                         name: n,
                         rate: -1,
                         neighbors: Default::default(),
-                        permutations: Default::default(),
-                        permutation_number: 0,
-                        turn_index: 0,
-                        open_tick: 0,
                     })
                 }
             }
@@ -318,9 +349,6 @@ impl World {
                     has_match = true;
                     v.rate = rate;
                     v.neighbors = nbr_indices.clone();
-                    v.permutations = compute_permutations(n_perms);
-                    v.permutation_number = 0;
-                    v.turn_index = 0;
                     break;
                 }
             }
@@ -335,51 +363,51 @@ impl World {
                     name: name,
                     rate: rate,
                     neighbors: nbr_indices.clone(),
-                    permutations: compute_permutations(n_perms),
-                    permutation_number: 0,
-                    turn_index: 0,
-                    open_tick: 0,
                 })
             }
         }
 
         let start_index = valves.iter().position(|v| v.name == start_name).unwrap();
 
+        // permute order non-zero indices
+        let mut nonzero_count: usize = 0;
+        let mut to_visit: Vec<usize> = Default::default();
+        for (i, v) in valves.iter().enumerate() {
+            if v.rate > 0 {
+                to_visit.push(i);
+            }
+        }
+
+        // compute next graph
+
+        let mut permutations: Vec<Vec<usize>> = vec![];
+        help_compute_permutations(&mut to_visit, 0, &mut permutations);
+
         return World {
             valves: valves,
             start_valve: start_index,
             timeout: 30,
+            permutation_number: 0,
+            permutations: permutations,
         };
     }
 
-    fn next_route(&mut self) -> usize {
+    fn next_route(&mut self) -> Option<usize> {
         // set all turn_index to 0
         // and tick forward by one permutation
-        let mut overflow = true;
-        for valve in self.valves.iter_mut() {
-            valve.turn_index = 0;
-            valve.open_tick = -1;
-            if overflow {
-                valve.permutation_number += 1;
-                if valve.permutation_number >= valve.permutations.len() {
-                    overflow = true;
-                    valve.permutation_number = 0;
-                } else {
-                    overflow = false;
-                }
-            }
+
+        self.permutation_number += 1;
+        if self.permutation_number >= self.permutations.len() {
+            return None;
         }
-        println!("==Plan==");
-        for v in self.valves.iter() {
-            println!("{:?}", v);
-        }
-        println!("^^Plan^^");
+
+        println!("Plan: {:?}", self.permutations[self.permutation_number]);
 
         // run simulation following current permutation rules
         let mut pos = self.start_valve;
         let mut tick = 1;
         let mut pressure_released = 0;
-        for _ in 0..self.timeout {
+        for target in 0..self.timeout {
             // update released pressure
             for v in self.valves.iter() {
                 if v.open_tick != -1 {
