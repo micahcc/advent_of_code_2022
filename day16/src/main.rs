@@ -1,6 +1,4 @@
 use ndarray::prelude::*;
-use std::cmp;
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
@@ -179,12 +177,11 @@ struct World {
     start_valve: usize, // index we start at
     timeout: usize,
 
-    nexts: Array2<usize>,
+    dists: Array2<usize>,
 
     // order to take neighbors during traversal
     // this is a plan, its not updatd during traversal
-    permutation_number: usize,
-    permutations: Vec<Vec<usize>>,
+    to_visit: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -192,17 +189,16 @@ struct Valve {
     name: String,
     rate: i32,
     neighbors: Vec<usize>, // indices into valves array
-    is_open: bool,
 }
 
 fn get_path(next: &Array2<usize>, u_in: usize, v: usize) -> VecDeque<usize> {
+    let mut u = u_in;
     if next[[u, v]] == usize::MAX {
         println!("No path!");
         return VecDeque::new();
     }
 
     let mut path = VecDeque::new();
-    path.push_back(u);
     while u != v {
         u = next[[u, v]];
         path.push_back(u);
@@ -210,27 +206,23 @@ fn get_path(next: &Array2<usize>, u_in: usize, v: usize) -> VecDeque<usize> {
     return path;
 }
 
-fn compute_next(valves: Vec<Valve>) -> Array2<usize> {
+fn compute_dists(valves: &Vec<Valve>) -> Array2<usize> {
     // https://en.wikipedia.org/wiki/Floyd%E2%80%93Warshall_algorithm
     let n = valves.len();
     let mut dist = Array::zeros((n, n));
-    let mut next = Array::zeros((n, n));
-    dist.fill(usize::MAX);
-    next.fill(usize::MAX); // max is a sentinal for no path
+    dist.fill(valves.len());
 
     for (u, valve) in valves.iter().enumerate() {
-        for nbr in valve.neighbors {
+        for nbr in valve.neighbors.iter() {
             // can go directly, dist = 1, next equals direct
-            dist[[u, nbr]] = 1;
-            next[[u, nbr]] = nbr;
+            dist[[u, *nbr]] = 1;
         }
     }
 
     for (u, valve) in valves.iter().enumerate() {
-        for nbr in valve.neighbors {
+        for _ in valve.neighbors.iter() {
             // already here, dist is zero
             dist[[u, u]] = 0;
-            next[[u, u]] = u;
         }
     }
 
@@ -240,13 +232,12 @@ fn compute_next(valves: Vec<Valve>) -> Array2<usize> {
                 // if going through k makes the distance shorter, then take it
                 if dist[[i, j]] > dist[[i, k]] + dist[[k, j]] {
                     dist[[i, j]] = dist[[i, k]] + dist[[k, j]];
-                    next[[i, j]] = next[[i, k]];
                 }
             }
         }
     }
 
-    return next;
+    return dist;
 }
 
 impl std::fmt::Display for World {
@@ -275,15 +266,15 @@ impl std::fmt::Display for World {
     }
 }
 
-fn help_compute_permutations(arr: &mut Vec<usize>, k: usize, permutations: &mut Vec<Vec<usize>>) {
+fn help_compute_permutations(arr: &mut Vec<usize>, k: usize, cb: &mut dyn FnMut(&Vec<usize>)) {
     for i in k..arr.len() {
         arr.swap(i, k);
-        help_compute_permutations(arr, k + 1, permutations);
+        help_compute_permutations(arr, k + 1, cb);
         arr.swap(k, i);
     }
 
     if k == arr.len() - 1 {
-        permutations.push(arr.clone());
+        cb(arr);
     }
 }
 
@@ -337,7 +328,6 @@ impl World {
                         name: n,
                         rate: -1,
                         neighbors: Default::default(),
-                        is_open: false,
                     })
                 }
             }
@@ -346,11 +336,6 @@ impl World {
             let mut has_match = false;
             for v in valves.iter_mut() {
                 if v.name == name {
-                    let mut n_perms = nbr_indices.len();
-                    if rate > 0 {
-                        n_perms += 1;
-                    }
-
                     has_match = true;
                     v.rate = rate;
                     v.neighbors = nbr_indices.clone();
@@ -359,16 +344,10 @@ impl World {
             }
 
             if !has_match {
-                let mut n_perms = nbr_indices.len();
-                if rate > 0 {
-                    n_perms += 1;
-                }
-
                 valves.push(Valve {
                     name: name,
                     rate: rate,
                     neighbors: nbr_indices.clone(),
-                    is_open: false,
                 })
             }
         }
@@ -376,7 +355,6 @@ impl World {
         let start_index = valves.iter().position(|v| v.name == start_name).unwrap();
 
         // permute order non-zero indices
-        let mut nonzero_count: usize = 0;
         let mut to_visit: Vec<usize> = Default::default();
         for (i, v) in valves.iter().enumerate() {
             if v.rate > 0 {
@@ -385,109 +363,79 @@ impl World {
         }
 
         // compute next graph
-        let nexts = compute_next(valves);
+        let dists = compute_dists(&valves);
 
-        let mut permutations: Vec<Vec<usize>> = vec![];
-        help_compute_permutations(&mut to_visit, 0, &mut permutations);
-
+        println!("Built world");
         return World {
             valves: valves,
             start_valve: start_index,
             timeout: 30,
-            permutation_number: 0,
-            permutations: permutations,
-            nexts: nexts,
+            to_visit: to_visit,
+            dists: dists,
         };
     }
 
-    fn next_route(&mut self) -> Option<usize> {
-        // set all turn_index to 0
-        // and tick forward by one permutation
+    fn next_route(&mut self, targets: &Vec<usize>) -> usize {
+        let mut t = 0;
+        let mut curr_index = self.start_valve;
+        let mut released = 0;
 
-        self.permutation_number += 1;
-        if self.permutation_number >= self.permutations.len() {
-            return None;
+        //println!("===");
+        //for t in targets {
+        //    print!("{:?},", self.valves[*t].name);
+        //}
+        //print!("\n");
+        for next_index in targets {
+            let next_t = t + self.dists[[curr_index, *next_index]] + 1;
+            if next_t >= 30 {
+                break;
+            }
+            let will_release = ((30 - next_t) as i32) * (self.valves[*next_index].rate);
+            released += will_release;
+            //println!(
+            //    "{} to {}, travel from {}({}) to {}({}), will release {}*{}={}",
+            //    t,
+            //    next_t,
+            //    self.valves[curr_index].name,
+            //    curr_index,
+            //    self.valves[*next_index].name,
+            //    next_index,
+            //    (30 - t),
+            //    self.valves[*next_index].rate,
+            //    will_release
+            //);
+
+            t = next_t;
+            curr_index = *next_index;
         }
-
-        // close all valves
-        for v in self.valves.iter_mut() {
-            v.is_open = false;
-        }
-
-        println!("Plan: {:?}", self.permutations[self.permutation_number]);
-        let mut targets = self.permutations[self.permutation_number].clone();
 
         // run simulation following current permutation rules
-        let mut route: VecDeque<usize> = VecDeque::new();
-        let mut pos = self.start_valve;
-        let mut tick = 1;
-        let mut pressure_released = 0;
-        for target in 0..self.timeout {
-            // update released pressure
-            for v in self.valves.iter() {
-                if v.is_open {
-                    pressure_released += v.rate;
-                    println!("{} open, releasing {}", v.name, v.rate);
-                }
-            }
-
-            // figure out route
-            let mut can_move = true;
-            if route.len() == 0 {
-                if !self.valves[pos].is_open && self.valves[pos].rate > 0 {
-                    // open it
-                    self.valves[pos].is_open = true;
-                    can_move = false;
-                }
-                // don't need to open or already open
-                // new route
-                let next_target = targets.pop().unwrap_or_default();
-                route = get_path(&self.nexts, pos, next_target);
-            }
-
-            println!("t={} at={:?}", tick, self.valves[pos]);
-            if can_move && route.len() > 0 {
-                // move toward next target
-                match route.pop_front() {
-                    Some(new_pos) => {
-                        println!(
-                            "Moving {} to {}",
-                            self.valves[pos].name, self.valves[new_pos].name
-                        );
-                        pos = new_pos;
-                    }
-                    None => {
-                        println!("Idling");
-                    }
-                }
-            }
-
-            // move forward in time
-            tick += 1;
-        }
-        return Some(pressure_released as usize);
+        return released as usize;
     }
 }
 
 fn part1(contents: &str) {
     let mut world = World::parse(contents);
-    println!("{:?}", world);
+    let mut targets = world.to_visit.clone();
 
     let mut max_released = 0;
-    for i in 0..10000 {
-        match world.next_route() {
-            Some(released) => {
-                println!("Route: {}, Released: {}", i, released);
-                if released > max_released {
-                    max_released = released;
-                }
-            }
-            _ => {
-                println!("Exhausted ordering");
-                break;
-            }
+    let mut i: usize = 0;
+    let mut cb = |targets: &Vec<usize>| {
+        let released = world.next_route(&targets);
+        if released > max_released {
+            max_released = released;
         }
-    }
+
+        if i % 1000000 == 0 {
+            println!(
+                "Route: {:+e}, Released: {}, Best: {}",
+                i, released, max_released
+            );
+        }
+        i += 1;
+    };
+
+    help_compute_permutations(&mut targets, 0, &mut cb);
 
     println!("Max released: {}", max_released);
     // find fastest path
